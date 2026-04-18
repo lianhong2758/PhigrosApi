@@ -1,33 +1,68 @@
 package phigros_test
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
+	"reflect"
 	"testing"
 
 	"github.com/lianhong2758/PhigrosAPI/phigros"
 )
 
-// 个人Session获取查看link: https://www.taptap.cn/moment/535045245566452043
-// 2.2
-var Session = "nkyjch88ydrg4js83bea9jyiw"
-
-func TestSave(t *testing.T) {
-	//data, _ := phigros.GetDataFormTap(phigros.UserMeUrl, Session) //获取id
-	data, _ := phigros.GetDataFormTap(phigros.SaveUrl, Session) //获取存档链接
-	var us phigros.GameSave
-	_ = json.Unmarshal(data, &us)
-	_ = os.MkdirAll("../data/gamesave/", os.ModePerm)
-	phigros.SaveGameData(us.Results[0].GameFile.URL, "../data/gamesave/"+Session+".zip")
-	_ = phigros.LoadDifficult("../difficulty.tsv")
-	j, _ := phigros.ParseSave("../data/gamesave/" + Session + ".zip")
-	fmt.Println(j)
+func loadSampleSave(t *testing.T) string {
+	t.Helper()
+	root := filepath.Join("..", "data", "gamesave", "nkyjch88ydrg4js83bea9jyiw.zip")
+	if _, err := os.Stat(root); err != nil {
+		t.Fatalf("sample save missing: %v", err)
+	}
+	if err := phigros.LoadDifficult(filepath.Join("..", "difficulty.tsv")); err != nil {
+		t.Fatalf("load difficulty: %v", err)
+	}
+	return root
 }
-func TestJson(t *testing.T) {
-	_ = phigros.LoadDifficult("../difficulty.tsv")
-	j,_:= phigros.GetUserRecordQuickly(Session)
-	j.ScoreAcc = phigros.BN(j.ScoreAcc, 5)
-	data, _ := json.Marshal(j)
-	fmt.Println(string(data))
+
+func TestParseSave(t *testing.T) {
+	path := loadSampleSave(t)
+
+	save, err := phigros.ParseSave(path)
+	if err != nil {
+		t.Fatalf("ParseSave failed: %v", err)
+	}
+
+	if save.GameKey.Version != 2 {
+		t.Fatalf("unexpected gameKey version: %d", save.GameKey.Version)
+	}
+	if save.GameProgress.Version != 3 {
+		t.Fatalf("unexpected gameProgress version: %d", save.GameProgress.Version)
+	}
+	if len(save.GameRecord) == 0 {
+		t.Fatal("gameRecord should not be empty")
+	}
+	if len(save.GameRecord.Score()) == 0 {
+		t.Fatal("score list should not be empty")
+	}
+}
+
+func TestSaveRoundTrip(t *testing.T) {
+	path := loadSampleSave(t)
+
+	save, err := phigros.ParseSave(path)
+	if err != nil {
+		t.Fatalf("ParseSave failed: %v", err)
+	}
+	fmt.Println(save.GameKey)
+	data, err := phigros.MarshalSave(save)
+	if err != nil {
+		t.Fatalf("MarshalSave failed: %v", err)
+	}
+
+	parsed, err := phigros.ParseSaveBytes(data)
+	if err != nil {
+		t.Fatalf("ParseSaveBytes failed: %v", err)
+	}
+
+	if !reflect.DeepEqual(save, parsed) {
+		t.Fatal("save round trip mismatch")
+	}
 }

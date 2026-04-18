@@ -1,5 +1,7 @@
 package phigros
 
+import "encoding/binary"
+
 type Bytes struct {
 	Data []byte
 	ptr  int
@@ -7,7 +9,7 @@ type Bytes struct {
 }
 
 func NewBytesReader(b []byte) *Bytes {
-	return &Bytes{Data: b, ptr: 0, bit: 0}
+	return &Bytes{Data: b}
 }
 
 func (b *Bytes) Alignment() {
@@ -17,91 +19,65 @@ func (b *Bytes) Alignment() {
 	}
 }
 
-// 也叫VarInt,这里用来对应uint16,因为内置的uint8==byte无法共存
-func (b *Bytes) ReadVarShort() byte {
+// VarShort is a 7-bit little-endian integer encoded in one or two bytes.
+func (b *Bytes) ReadVarShort() uint16 {
 	b.Alignment()
-	num := b.Data[b.ptr]
+	num := uint16(b.Data[b.ptr])
 	if num < 128 {
 		b.ptr++
-	} else {
-		num = num&0b01111111 ^ b.Data[b.ptr+1]<<7
-		b.ptr += 2
+		return num
 	}
+	num = uint16(b.Data[b.ptr]&0x7F) | uint16(b.Data[b.ptr+1])<<7
+	b.ptr += 2
 	return num
 }
 
 func (b *Bytes) ReadShort() int16 {
+	b.Alignment()
+	value := int16(binary.LittleEndian.Uint16(b.Data[b.ptr:]))
 	b.ptr += 2
-	return int16(b.Data[b.ptr-2]) + int16(b.Data[b.ptr-1])<<8
+	return value
 }
 
 func (b *Bytes) ReadByte1() byte {
 	b.Alignment()
+	value := b.Data[b.ptr]
 	b.ptr++
-	return b.Data[b.ptr-1]
+	return value
 }
 
-func (b *Bytes) ReadBool() (tb bool) {
-	if b.bit >= 4 {
+func (b *Bytes) ReadBool() bool {
+	if b.bit >= 8 {
 		b.bit = 0
 		b.ptr++
 	}
-	t := b.Data[b.ptr]
-	tb = GetBool(t, b.bit)
+	value := GetBool(b.Data[b.ptr], b.bit)
 	b.bit++
-	return
-}
-
-func (b *Bytes) ReadNext() {
-	b.ptr++
+	return value
 }
 
 func (b *Bytes) ReadString() string {
 	b.Alignment()
-	length := b.ReadVarShort()
-	b.ptr += int(length)
-	return BytesToString(b.Data[b.ptr-int(length) : b.ptr])
+	length := int(b.ReadVarShort())
+	start := b.ptr
+	b.ptr += length
+	return BytesToString(b.Data[start:b.ptr])
 }
 
 func (b *Bytes) ReadInt32() int32 {
 	b.Alignment()
+	value := int32(binary.LittleEndian.Uint32(b.Data[b.ptr:]))
 	b.ptr += 4
-	return BytesToInt(b.Data[b.ptr-4 : b.ptr])
+	return value
 }
 
 func (b *Bytes) ReadFloat32() float32 {
 	b.Alignment()
+	value := ByteToFloat32(b.Data[b.ptr : b.ptr+4])
 	b.ptr += 4
-	return ByteToFloat32(b.Data[b.ptr-4 : b.ptr])
+	return value
 }
 
 func GetBool(num byte, index int) bool {
 	return (num>>index)&1 == 1
-}
-
-func (b *Bytes) ReadRecord(songId string) []ScoreAcc {
-	endPosition := b.ptr + int(b.Data[b.ptr]) + 1
-	b.ptr += 1
-	exists := b.Data[b.ptr]
-	b.ptr += 1
-	fc := b.Data[b.ptr]
-	b.ptr += 1
-	diff := difficulty[songId]
-	records := []ScoreAcc{}
-	for level := range len(diff) {
-		if GetBool(exists, level) {
-			scoreAcc := ScoreAcc{}
-			scoreAcc.Score = int(b.ReadInt32())
-			scoreAcc.Acc = b.ReadFloat32()
-			scoreAcc.Level = levels[level]
-			scoreAcc.Fc = GetBool(fc, level)
-			scoreAcc.SongId = songId
-			scoreAcc.Difficulty = diff[level]
-			scoreAcc.Rks = (scoreAcc.Acc - 55) / 45
-			scoreAcc.Rks = scoreAcc.Rks * scoreAcc.Rks * scoreAcc.Difficulty
-			records = append(records, scoreAcc)
-		}
-	}
-	b.ptr = endPosition
-	return records
 }
